@@ -4,8 +4,23 @@ import Navbar from './components/Navbar'
 import IssuesSidebar from './components/IssuesSidebar'
 import MapView from './components/MapView'
 import ReportForm from './components/ReportForm'
+import Auth from './components/Auth' // 💡 Connected the secure auth interface gateway
+
+// Global Axios Interceptor: Automatically appends the JWT bearer token to every outbound API call
+axios.interceptors.request.use(
+  config => {
+    const token = localStorage.getItem('civic_token')
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`
+    }
+    return config
+  },
+  error => Promise.reject(error)
+)
 
 function App() {
+  // 💡 Real-time token existence verification switch
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('civic_token'))
   const [issues, setIssues] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedIssue, setSelectedIssue] = useState(null)
@@ -24,13 +39,30 @@ function App() {
       })
       .catch(error => {
         console.error("Database communication error:", error)
+        // 💡 Security Fallback: Automatically log out user if token expires or is manipulated (401 Unauthorized)
+        if (error.response?.status === 401) {
+          handleUserLogOut()
+        }
         setLoading(false)
       })
   }
 
   useEffect(() => {
-    fetchIssuesFromServer()
-  }, [])
+    if (isAuthenticated) {
+      fetchIssuesFromServer()
+    }
+  }, [isAuthenticated])
+
+  const handleAuthSuccessTrigger = () => {
+    setIsAuthenticated(true)
+  }
+
+  const handleUserLogOut = () => {
+    localStorage.clear()
+    setIsAuthenticated(false)
+    setSelectedIssue(null)
+    setViewMode('list')
+  }
 
   const handleIssueAddedSuccess = () => {
     fetchIssuesFromServer()
@@ -60,8 +92,7 @@ function App() {
       .catch(error => {
         console.error("Status transaction exception:", error)
         if (error.response && error.response.data) {
-          // 💡 FIXED: Dynamically auditing if error payload is a structured array or direct text string
-          const errorData = error.response.data.image_after;
+          const errorData = error.response.data.image_after || error.response.data.error;
           const serverMessage = Array.isArray(errorData) 
             ? errorData[0] 
             : (typeof errorData === 'string' ? errorData : JSON.stringify(error.response.data));
@@ -79,7 +110,11 @@ function App() {
         alert(response.data.success || response.data.warning)
         fetchIssuesFromServer()
       })
-      .catch(error => console.error("Voting processing error:", error))
+      .catch(error => {
+        console.error("Voting processing error:", error)
+        const serverErr = error.response?.data?.error || "Failed server validation passes."
+        alert(`Voting Rejected: ${serverErr}`)
+      })
   }
 
   const filteredIssues = issues.filter(issue => {
@@ -93,14 +128,18 @@ function App() {
     return matchesSearch && matchesCategory
   })
 
+  // 💡 CORE GATEWAY GUARD: If no authentic crypto token is found, render the login panel exclusively
+  if (!isAuthenticated) {
+    return <Auth onAuthSuccess={handleAuthSuccessTrigger} />
+  }
+
+  // Render main dashboard logic only if verified user identity matches passport parameters
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-50 overflow-hidden font-sans">
       <Navbar 
-        userRole={localStorage.getItem('sim_role') || 'citizen'} 
-        onRoleChange={(role) => {
-          localStorage.setItem('sim_role', role)
-          window.location.reload()
-        }} 
+        userRole={localStorage.getItem('civic_role') || 'CITIZEN'} 
+        userName={localStorage.getItem('civic_user') || 'User'}
+        onLogOut={handleUserLogOut} 
       />
       
       <main className="flex flex-1 overflow-hidden">
@@ -119,7 +158,7 @@ function App() {
             setCategoryFilter={setCategoryFilter}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
-            userRole={localStorage.getItem('sim_role') || 'citizen'}
+            userRole={localStorage.getItem('civic_role') || 'CITIZEN'}
           />
         ) : (
           <ReportForm 
@@ -128,7 +167,14 @@ function App() {
             onCancel={() => setViewMode('list')}
           />
         )}
-        <MapView issues={filteredIssues} selectedIssue={selectedIssue} viewMode={viewMode} clickedLocation={clickedLocation} onMapClick={setClickedLocation} onMarkerClick={setSelectedIssue} />
+        <MapView 
+          issues={filteredIssues} 
+          selectedIssue={selectedIssue} 
+          viewMode={viewMode} 
+          clickedLocation={clickedLocation} 
+          onMapClick={setClickedLocation} 
+          onMarkerClick={setSelectedIssue} 
+        />
       </main>
     </div>
   )
