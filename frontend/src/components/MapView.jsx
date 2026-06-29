@@ -1,84 +1,183 @@
-import { useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'
+import { useState, useEffect } from 'react'
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
-import markerIcon from 'leaflet/dist/images/marker-icon.png'
-import markerShadow from 'leaflet/dist/images/marker-shadow.png'
+import 'leaflet/dist/leaflet.css'
 
-let DefaultIcon = L.icon({
-    iconUrl: markerIcon,
-    shadowUrl: markerShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
+// 💡 Vite/Leaflet Asset Fix: Prevents missing marker icons during runtime transitions
+delete L.Icon.Default.prototype._getIconUrl
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+})
 
-// Custom sub-component to handle automatic fly-to logic
-function RecenterMap({ selectedIssue }) {
+// 🌐 CAMERA CONTROLLER: Center pans cleanly when location streams activate
+function ChangeMapView({ center }) {
   const map = useMap()
   useEffect(() => {
-    if (selectedIssue) {
-      map.flyTo([selectedIssue.latitude, selectedIssue.longitude], 16, {
-        animate: true,
-        duration: 1.5
-      })
+    if (center) {
+      map.panTo(center)
     }
-  }, [selectedIssue, map])
+  }, [center, map])
   return null
 }
 
-// 💡 1. Naya Custom Component: Yeh click events capture karega
-function MapClickHandler({ viewMode, onMapClick }) {
+// 🗺️ GRID TAP LISTENER: Allows users to manually place a pin anywhere on the canvas
+function MapClickHandler({ onMapClick }) {
   useMapEvents({
     click(e) {
-      // Jab sirf report form khula ho, tabhi clicks registers karo
-      if (viewMode === 'report') {
-        onMapClick({
-          lat: e.latlng.lat,
-          lng: e.latlng.lng
-        })
-      }
-    }
+      onMapClick({ 
+        lat: e.latlng.lat, 
+        lng: e.latlng.lng, 
+        address: "Location Pinpointed on Map Grid", 
+        place: "Selected Coordinate Zone" 
+      })
+    },
   })
   return null
 }
 
-function MapView({ issues, selectedIssue, viewMode, clickedLocation, onMapClick }) {
-  const bhopalCenter = [23.2599, 77.4126]
+function MapView({ issues, selectedIssue, viewMode, clickedLocation, onMapClick, onMarkerClick }) {
+  const defaultCenter = [23.2599, 77.4126] // Fallback Central Bhopal Coords
+  const [mapCenter, setMapCenter] = useState(defaultCenter)
+  const [isTracking, setIsTracking] = useState(false)
+  const [geoWatchId, setGeoWatchId] = useState(null)
+
+  // Sync camera viewport if an existing issue is clicked from the sidebar list
+  useEffect(() => {
+    if (selectedIssue) {
+      setMapCenter([parseFloat(selectedIssue.latitude), parseFloat(selectedIssue.longitude)])
+    }
+  }, [selectedIssue])
+
+  // 📡 CORE GEOLOCATION HARDWARE STREAM TELEMETRY
+  useEffect(() => {
+    if (isTracking) {
+      if (!navigator.geolocation) {
+        alert("Your modern web client browser lacks standard GPS positioning telemetry components.")
+        setIsTracking(false)
+        return
+      }
+
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords
+          const liveCoords = { lat: latitude, lng: longitude }
+          
+          // Continuously stream hardware telemetry straight down into form inputs
+          onMapClick({ 
+            lat: latitude, 
+            lng: longitude, 
+            address: "Live GPS Telemetry Sync Active", 
+            place: "Current Live Coordinates Location" 
+          })
+          setMapCenter([latitude, longitude])
+        },
+        (error) => {
+          console.error("GPS telemetry access failure:", error)
+          alert("Location streaming access dropped. Verify terminal parameters permission flags.")
+          setIsTracking(false)
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      )
+      setGeoWatchId(watchId)
+    } else {
+      if (geoWatchId) {
+        navigator.geolocation.clearWatch(geoWatchId)
+        setGeoWatchId(null)
+      }
+    }
+
+    return () => {
+      if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId)
+    }
+  }, [isTracking])
 
   return (
-    <div className="w-2/3 h-full bg-slate-200 relative">
-      <MapContainer center={bhopalCenter} zoom={13} className="h-full w-full z-0">
+    <div className="flex-1 h-full relative bg-slate-100 overflow-hidden flex flex-col">
+      
+      {/* 🚀 SIMPLIFIED FLOATING CONTROLS: Pure Live Tracking Toggle Mechanism Switch */}
+      <div className="absolute top-4 right-4 z-[999]">
+        <button
+          type="button"
+          onClick={() => setIsTracking(!isTracking)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider shadow-md border cursor-pointer transition-all ${
+            isTracking 
+              ? 'bg-emerald-600 border-emerald-500 text-white animate-pulse' 
+              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <span>🎯</span>
+          {isTracking ? 'Live GPS: Tracking Active' : 'Enable Live GPS Tracking'}
+        </button>
+      </div>
+
+      {/* 🗺️ ACTIVE OPENSTREETMAP LEAFLET INSTANCE CANVAS */}
+      <MapContainer 
+        center={mapCenter} 
+        zoom={14} 
+        className="w-full h-full z-10"
+        zoomControl={false}
+      >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        
-        <RecenterMap selectedIssue={selectedIssue} />
-        
-        {/* 💡 2. Click Handler hook context inject kiya */}
-        <MapClickHandler viewMode={viewMode} onMapClick={onMapClick} />
 
-        {/* Existing active database markers */}
-        {issues.map(issue => (
-          <Marker key={issue.id} position={[issue.latitude, issue.longitude]}>
-            <Popup>
-              <div className="text-sm">
-                <strong>Issue #{issue.id}</strong>
-                <p className="mt-1">{issue.description}</p>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+        <ChangeMapView center={mapCenter} />
+        <MapClickHandler onMapClick={onMapClick} />
 
-        {/* 💡 3. Temporary Selection Pin: Agar user ne map par click kiya hai toh naya temporary pin dikhao */}
-        {viewMode === 'report' && clickedLocation && (
-          <Marker position={[clickedLocation.lat, clickedLocation.lng]}>
-            <Popup>
-              <div className="text-xs font-semibold text-blue-600">Selected Location Pin</div>
-            </Popup>
-          </Marker>
+        {/* Dynamic Placement Pin Flag: Follows active tracking or manual grid selections */}
+        {clickedLocation && (
+          <Marker position={[clickedLocation.lat, clickedLocation.lng]} />
         )}
+
+        {/* Global Complaints Loop Database Markers Rendering Pins */}
+        {issues.map((issue) => (
+          <Marker 
+            key={issue.id} 
+            position={[parseFloat(issue.latitude), parseFloat(issue.longitude)]}
+            eventHandlers={{
+              click: () => onMarkerClick(issue)
+            }}
+          />
+        ))}
       </MapContainer>
+
+      {/* 📊 UBER STYLE BOTTOM TELEMETRY META READOUT DESIGN DISPLAY BOX */}
+      <div className="absolute bottom-4 inset-x-4 z-[999] max-w-sm mx-auto bg-white rounded-2xl shadow-xl border border-slate-200 p-4 flex flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-sm border ${isTracking ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>
+            📍
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="text-xs font-bold text-slate-800 truncate">
+              {isTracking ? 'Streaming Hardware GPS' : 'Manual Placement Coords'}
+            </h4>
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">
+              {clickedLocation ? 'Coordinate lock acquired' : 'Awaiting position feedback log'}
+            </p>
+          </div>
+        </div>
+
+        {/* High Precision Coordinate Value Panels */}
+        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold text-slate-500 bg-slate-50 border border-slate-100 p-2 rounded-lg">
+          <div>LAT: {clickedLocation?.lat ? clickedLocation.lat.toFixed(6) : mapCenter[0].toFixed(6)}</div>
+          <div>LNG: {clickedLocation?.lng ? clickedLocation.lng.toFixed(6) : mapCenter[1].toFixed(6)}</div>
+        </div>
+
+        {/* Confirm Trigger Button Overlay Boundary for Report Operations View */}
+        {viewMode === 'report' && (
+          <button
+            type="button"
+            className="w-full bg-slate-950 hover:bg-slate-800 text-white text-[10px] font-bold py-2.5 uppercase tracking-wider rounded-xl transition-all shadow-xs cursor-pointer text-center"
+            onClick={() => alert("Coordinates successfully registered inside your complaint log!")}
+          >
+            Confirm Anchor Coordinates
+          </button>
+        )}
+      </div>
+
     </div>
   )
 }
